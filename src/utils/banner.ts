@@ -7,7 +7,7 @@ export function printBanner() {
   console.log(chalk.red.bold(` | |     |  _| |  \\| |\\ \\ / / `));
   console.log(chalk.red.bold(` | |___  | |___| |\\  | \\ V /  `));
   console.log(chalk.red.bold(` |_____| |_____|_| \\_|  \\_/   `));
-  console.log(chalk.cyan(` 🚀 Laravel & Docker Environment CLI v1.0.0`));
+  console.log(chalk.cyan(` 🚀 Laravel & Docker Environment CLI v1.1.0`));
   console.log(chalk.gray(` ───────────────────────────────────────────────────────────`));
   console.log();
 }

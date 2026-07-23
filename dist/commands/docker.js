@@ -11,6 +11,8 @@ exports.runDockerLogs = runDockerLogs;
 exports.runDockerShell = runDockerShell;
 exports.runArtisanCommand = runArtisanCommand;
 exports.runComposerCommand = runComposerCommand;
+exports.runDockerRestart = runDockerRestart;
+exports.runTest = runTest;
 const execa_1 = __importDefault(require("execa"));
 const chalk_1 = __importDefault(require("chalk"));
 const fs_1 = __importDefault(require("fs"));
@@ -128,5 +130,31 @@ async function runComposerCommand(args) {
     }
     catch (err) {
         console.error(chalk_1.default.red('❌ Composer command failed:'), err.message);
+    }
+}
+async function runDockerRestart(service) {
+    checkDockerComposeFile();
+    const target = service || 'all containers';
+    console.log(chalk_1.default.cyan(`🔄 Restarting ${target}...`));
+    try {
+        const args = ['compose', 'restart'];
+        if (service) {
+            args.push(service);
+        }
+        await (0, execa_1.default)('docker', args, { stdio: 'inherit' });
+        console.log(chalk_1.default.green(`✅ ${target} restarted successfully!`));
+    }
+    catch (err) {
+        console.error(chalk_1.default.red('❌ Docker restart failed:'), err.message);
+    }
+}
+async function runTest(args) {
+    checkDockerComposeFile();
+    console.log(chalk_1.default.cyan('🧪 Running tests inside app container...'));
+    try {
+        await (0, execa_1.default)('docker', ['compose', 'exec', 'app', 'php', 'artisan', 'test', ...args], { stdio: 'inherit' });
+    }
+    catch (err) {
+        console.error(chalk_1.default.red('❌ Test command failed:'), err.message);
     }
 }

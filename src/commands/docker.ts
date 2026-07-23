@@ -117,3 +117,29 @@ export async function runComposerCommand(args: string[]) {
     console.error(chalk.red('❌ Composer command failed:'), err.message);
   }
 }
+
+export async function runDockerRestart(service?: string) {
+  checkDockerComposeFile();
+  const target = service || 'all containers';
+  console.log(chalk.cyan(`🔄 Restarting ${target}...`));
+  try {
+    const args = ['compose', 'restart'];
+    if (service) {
+      args.push(service);
+    }
+    await execa('docker', args, { stdio: 'inherit' });
+    console.log(chalk.green(`✅ ${target} restarted successfully!`));
+  } catch (err: any) {
+    console.error(chalk.red('❌ Docker restart failed:'), err.message);
+  }
+}
+
+export async function runTest(args: string[]) {
+  checkDockerComposeFile();
+  console.log(chalk.cyan('🧪 Running tests inside app container...'));
+  try {
+    await execa('docker', ['compose', 'exec', 'app', 'php', 'artisan', 'test', ...args], { stdio: 'inherit' });
+  } catch (err: any) {
+    console.error(chalk.red('❌ Test command failed:'), err.message);
+  }
+}

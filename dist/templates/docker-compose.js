@@ -2,10 +2,12 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.generateDockerCompose = generateDockerCompose;
 function generateDockerCompose(options) {
-    const { projectName, dbDriver, dbName, dbUser, dbPassword, webPort, dbPort, redisPort, mailpitPort, includeRedis, includeMailpit } = options;
+    const { projectName, dbDriver, dbName, dbUser, dbPassword, webPort, dbPort, redisPort, mailpitPort, includeRedis, includeMailpit, includeMeilisearch, meilisearchPort, includeMinIO, minioPort, minioConsolePort, } = options;
+    // --- Database Service ---
     let dbService = '';
-    let dbEnv = '';
+    let dbVolumeName = '';
     if (dbDriver === 'postgres') {
+        dbVolumeName = 'dbdata';
         dbService = `
   db:
     image: postgres:16-alpine
@@ -22,7 +24,8 @@ function generateDockerCompose(options) {
     networks:
       - ${projectName}-network`;
     }
-    else {
+    else if (dbDriver === 'mysql') {
+        dbVolumeName = 'dbdata';
         dbService = `
   db:
     image: mysql:8.0
@@ -40,6 +43,27 @@ function generateDockerCompose(options) {
     networks:
       - ${projectName}-network`;
     }
+    else if (dbDriver === 'mariadb') {
+        dbVolumeName = 'dbdata';
+        dbService = `
+  db:
+    image: mariadb:11
+    container_name: ${projectName}-db
+    restart: unless-stopped
+    environment:
+      MARIADB_DATABASE: "\${DB_DATABASE:-${dbName}}"
+      MARIADB_USER: "\${DB_USERNAME:-${dbUser}}"
+      MARIADB_PASSWORD: "\${DB_PASSWORD:-${dbPassword}}"
+      MARIADB_ROOT_PASSWORD: "\${DB_PASSWORD:-${dbPassword}}"
+    ports:
+      - "${dbPort}:3306"
+    volumes:
+      - dbdata:/var/lib/mysql
+    networks:
+      - ${projectName}-network`;
+    }
+    // SQLite: no DB service, no volume
+    // --- Redis ---
     let redisService = '';
     if (includeRedis) {
         redisService = `
@@ -52,6 +76,7 @@ function generateDockerCompose(options) {
     networks:
       - ${projectName}-network`;
     }
+    // --- Mailpit ---
     let mailpitService = '';
     if (includeMailpit) {
         mailpitService = `
@@ -65,6 +90,57 @@ function generateDockerCompose(options) {
     networks:
       - ${projectName}-network`;
     }
+    // --- Meilisearch ---
+    let meilisearchService = '';
+    if (includeMeilisearch) {
+        meilisearchService = `
+  meilisearch:
+    image: getmeili/meilisearch:latest
+    container_name: ${projectName}-meilisearch
+    restart: unless-stopped
+    environment:
+      MEILI_NO_ANALYTICS: "true"
+    ports:
+      - "${meilisearchPort}:7700"
+    volumes:
+      - meilisearchdata:/meili_data
+    networks:
+      - ${projectName}-network`;
+    }
+    // --- MinIO ---
+    let minioService = '';
+    if (includeMinIO) {
+        minioService = `
+  minio:
+    image: minio/minio:latest
+    container_name: ${projectName}-minio
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: lenv
+      MINIO_ROOT_PASSWORD: password
+    ports:
+      - "${minioPort}:9000"
+      - "${minioConsolePort}:9001"
+    volumes:
+      - miniodata:/data
+    networks:
+      - ${projectName}-network`;
+    }
+    // --- Volumes ---
+    const volumeEntries = [];
+    if (dbVolumeName) {
+        volumeEntries.push(`  ${dbVolumeName}:\n    driver: local`);
+    }
+    if (includeMeilisearch) {
+        volumeEntries.push(`  meilisearchdata:\n    driver: local`);
+    }
+    if (includeMinIO) {
+        volumeEntries.push(`  miniodata:\n    driver: local`);
+    }
+    const volumesSection = volumeEntries.length > 0
+        ? `\nvolumes:\n${volumeEntries.join('\n')}\n`
+        : '';
     return `services:
   app:
     build:
@@ -91,14 +167,10 @@ function generateDockerCompose(options) {
       - app
     networks:
       - ${projectName}-network
-${dbService}${redisService}${mailpitService}
+${dbService}${redisService}${mailpitService}${meilisearchService}${minioService}
 
 networks:
   ${projectName}-network:
     driver: bridge
-
-volumes:
-  dbdata:
-    driver: local
-`;
+${volumesSection}`;
 }

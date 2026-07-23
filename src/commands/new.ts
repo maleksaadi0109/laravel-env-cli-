@@ -9,6 +9,32 @@ import { generateNginxConf } from '../templates/nginx';
 import { generateDockerCompose } from '../templates/docker-compose';
 import { fixDockerPermissions } from './docker';
 import { printBanner } from '../utils/banner';
+import { getProfile, getProfileNames, ProfileConfig } from '../config/profiles';
+
+interface ProjectConfig {
+  frontend: string;
+  phpVersion: string;
+  dbDriver: 'mysql' | 'postgres' | 'sqlite' | 'mariadb';
+  webPort: number;
+  dbPort: number;
+  includeRedis: boolean;
+  includeMailpit: boolean;
+  includeMeilisearch: boolean;
+  includeMinIO: boolean;
+  runDockerUp: boolean;
+}
+
+/**
+ * Get the default DB port for a given driver.
+ */
+function getDefaultDbPort(driver: string): number {
+  switch (driver) {
+    case 'postgres': return 5432;
+    case 'mysql': return 3306;
+    case 'mariadb': return 3306;
+    default: return 0; // SQLite doesn't use a port
+  }
+}
 
 export async function createNewLaravelProject(name?: string, options?: any) {
   printBanner();
@@ -36,73 +62,143 @@ export async function createNewLaravelProject(name?: string, options?: any) {
     process.exit(1);
   }
 
-  console.log(chalk.cyan.bold('📋 Project Configuration Setup:\n'));
+  // --- Profile handling ---
+  let config: ProjectConfig;
 
-  const setupAnswers = await inquirer.prompt([
-    {
-      type: 'list',
-      name: 'frontend',
-      message: 'Select Frontend Stack / Starter Kit:',
-      choices: [
-        { name: 'Blade (Standard Laravel views)', value: 'blade' },
-        { name: 'Vue (Inertia.js via Breeze)', value: 'vue' },
-        { name: 'React (Inertia.js via Breeze)', value: 'react' },
-        { name: 'Livewire (via Breeze)', value: 'livewire' },
-        { name: 'API Only', value: 'api' },
-      ],
-      default: 'blade',
-      when: () => !options?.frontend,
-    },
-    {
-      type: 'list',
-      name: 'phpVersion',
-      message: 'Select PHP Version:',
-      choices: ['8.3', '8.2', '8.4', '8.1'],
-      default: '8.3',
-    },
-    {
-      type: 'list',
-      name: 'dbDriver',
-      message: 'Select Database Engine:',
-      choices: [
-        { name: 'PostgreSQL', value: 'postgres' },
-        { name: 'MySQL', value: 'mysql' },
-      ],
-      default: 'postgres',
-    },
-    {
-      type: 'number',
-      name: 'webPort',
-      message: 'HTTP Web Port (Nginx):',
-      default: 8080,
-    },
-    {
-      type: 'number',
-      name: 'dbPort',
-      message: 'Database Host Port:',
-      default: 5432,
-    },
-    {
-      type: 'confirm',
-      name: 'includeRedis',
-      message: 'Include Redis container?',
-      default: true,
-    },
-    {
-      type: 'confirm',
-      name: 'includeMailpit',
-      message: 'Include Mailpit (Email testing) container?',
-      default: true,
-    },
-    {
-      type: 'confirm',
-      name: 'runDockerUp',
-      message: 'Start Docker containers immediately after setup?',
-      default: true,
-    },
-  ]);
+  if (options?.profile) {
+    const profileName = options.profile;
+    const profile = getProfile(profileName);
 
-  const selectedFrontend = options?.frontend || setupAnswers.frontend || 'blade';
+    if (!profile) {
+      console.error(chalk.red(`\n❌ Unknown profile: "${profileName}"`));
+      console.log(chalk.white('\nAvailable profiles:'));
+      for (const name of getProfileNames()) {
+        console.log(chalk.yellow(`  --profile=${name}`));
+      }
+      console.log();
+      process.exit(1);
+    }
+
+    console.log(chalk.cyan.bold(`📋 Using profile: ${chalk.white(profileName)}\n`));
+    console.log(chalk.gray('  Frontend:      ') + chalk.white(profile.frontend));
+    console.log(chalk.gray('  PHP:           ') + chalk.white(profile.phpVersion));
+    console.log(chalk.gray('  Database:      ') + chalk.white(profile.dbDriver));
+    console.log(chalk.gray('  Redis:         ') + chalk.white(profile.includeRedis ? '✅' : '❌'));
+    console.log(chalk.gray('  Mailpit:       ') + chalk.white(profile.includeMailpit ? '✅' : '❌'));
+    console.log(chalk.gray('  Meilisearch:   ') + chalk.white(profile.includeMeilisearch ? '✅' : '❌'));
+    console.log(chalk.gray('  MinIO:         ') + chalk.white(profile.includeMinIO ? '✅' : '❌'));
+    console.log(chalk.gray('  Web Port:      ') + chalk.white(String(profile.webPort)));
+    console.log(chalk.gray('  DB Port:       ') + chalk.white(profile.dbDriver === 'sqlite' ? 'N/A' : String(profile.dbPort)));
+    console.log();
+
+    config = {
+      frontend: profile.frontend,
+      phpVersion: profile.phpVersion,
+      dbDriver: profile.dbDriver,
+      webPort: profile.webPort,
+      dbPort: profile.dbPort,
+      includeRedis: profile.includeRedis,
+      includeMailpit: profile.includeMailpit,
+      includeMeilisearch: profile.includeMeilisearch,
+      includeMinIO: profile.includeMinIO,
+      runDockerUp: true,
+    };
+  } else {
+    // --- Interactive prompts ---
+    console.log(chalk.cyan.bold('📋 Project Configuration Setup:\n'));
+
+    const setupAnswers = await inquirer.prompt([
+      {
+        type: 'list',
+        name: 'frontend',
+        message: 'Select Frontend Stack / Starter Kit:',
+        choices: [
+          { name: 'Blade (Standard Laravel views)', value: 'blade' },
+          { name: 'Vue (Inertia.js via Breeze)', value: 'vue' },
+          { name: 'React (Inertia.js via Breeze)', value: 'react' },
+          { name: 'Livewire (via Breeze)', value: 'livewire' },
+          { name: 'API Only', value: 'api' },
+        ],
+        default: 'blade',
+        when: () => !options?.frontend,
+      },
+      {
+        type: 'list',
+        name: 'phpVersion',
+        message: 'Select PHP Version:',
+        choices: ['8.3', '8.2', '8.4', '8.1'],
+        default: '8.3',
+      },
+      {
+        type: 'list',
+        name: 'dbDriver',
+        message: 'Select Database Engine:',
+        choices: [
+          { name: 'PostgreSQL', value: 'postgres' },
+          { name: 'MySQL', value: 'mysql' },
+          { name: 'MariaDB', value: 'mariadb' },
+          { name: 'SQLite (no container)', value: 'sqlite' },
+        ],
+        default: 'postgres',
+      },
+      {
+        type: 'number',
+        name: 'webPort',
+        message: 'HTTP Web Port (Nginx):',
+        default: 8080,
+      },
+      {
+        type: 'number',
+        name: 'dbPort',
+        message: 'Database Host Port:',
+        default: (answers: any) => getDefaultDbPort(answers.dbDriver),
+        when: (answers: any) => answers.dbDriver !== 'sqlite',
+      },
+      {
+        type: 'confirm',
+        name: 'includeRedis',
+        message: 'Include Redis container?',
+        default: true,
+      },
+      {
+        type: 'confirm',
+        name: 'includeMailpit',
+        message: 'Include Mailpit (Email testing) container?',
+        default: true,
+      },
+      {
+        type: 'confirm',
+        name: 'includeMeilisearch',
+        message: 'Include Meilisearch (Full-text search) container?',
+        default: false,
+      },
+      {
+        type: 'confirm',
+        name: 'includeMinIO',
+        message: 'Include MinIO (S3-compatible storage) container?',
+        default: false,
+      },
+      {
+        type: 'confirm',
+        name: 'runDockerUp',
+        message: 'Start Docker containers immediately after setup?',
+        default: true,
+      },
+    ]);
+
+    config = {
+      frontend: options?.frontend || setupAnswers.frontend || 'blade',
+      phpVersion: setupAnswers.phpVersion,
+      dbDriver: setupAnswers.dbDriver,
+      webPort: setupAnswers.webPort,
+      dbPort: setupAnswers.dbPort || 0,
+      includeRedis: setupAnswers.includeRedis,
+      includeMailpit: setupAnswers.includeMailpit,
+      includeMeilisearch: setupAnswers.includeMeilisearch,
+      includeMinIO: setupAnswers.includeMinIO,
+      runDockerUp: setupAnswers.runDockerUp,
+    };
+  }
 
   console.log('\n' + chalk.gray('───────────────────────────────────────────────────────────') + '\n');
   const spinner = ora('Creating fresh Laravel project via Composer...').start();
@@ -118,14 +214,14 @@ export async function createNewLaravelProject(name?: string, options?: any) {
   }
 
   // 1b. Install Frontend Scaffolding if selected
-  if (selectedFrontend !== 'blade') {
-    const breezeSpinner = ora(`Installing ${selectedFrontend} frontend scaffolding via Laravel Breeze...`).start();
+  if (config.frontend !== 'blade') {
+    const breezeSpinner = ora(`Installing ${config.frontend} frontend scaffolding via Laravel Breeze...`).start();
     try {
       await execa('composer', ['require', 'laravel/breeze', '--dev'], { cwd: targetDir });
-      await execa('php', ['artisan', 'breeze:install', selectedFrontend, '--no-interaction'], { cwd: targetDir });
-      breezeSpinner.succeed(chalk.green(`Frontend scaffolding (${selectedFrontend}) installed successfully!`));
+      await execa('php', ['artisan', 'breeze:install', config.frontend, '--no-interaction'], { cwd: targetDir });
+      breezeSpinner.succeed(chalk.green(`Frontend scaffolding (${config.frontend}) installed successfully!`));
     } catch (err: any) {
-      breezeSpinner.fail(chalk.red(`Failed to install ${selectedFrontend} frontend scaffolding.`));
+      breezeSpinner.fail(chalk.red(`Failed to install ${config.frontend} frontend scaffolding.`));
       console.error(err.message);
     }
   }
@@ -141,7 +237,7 @@ export async function createNewLaravelProject(name?: string, options?: any) {
     // 3. Write Dockerfile & Nginx conf
     fs.writeFileSync(
       path.join(dockerDir, 'Dockerfile'),
-      generateDockerfile({ phpVersion: setupAnswers.phpVersion })
+      generateDockerfile({ phpVersion: config.phpVersion, dbDriver: config.dbDriver })
     );
 
     fs.writeFileSync(
@@ -152,27 +248,44 @@ export async function createNewLaravelProject(name?: string, options?: any) {
     // 4. Write docker-compose.yml
     const dockerComposeContent = generateDockerCompose({
       projectName: projectName as string,
-      dbDriver: setupAnswers.dbDriver,
+      dbDriver: config.dbDriver,
       dbName: 'laravel',
       dbUser: 'laravel',
       dbPassword: 'secretpassword',
-      webPort: setupAnswers.webPort,
-      dbPort: setupAnswers.dbPort,
+      webPort: config.webPort,
+      dbPort: config.dbPort,
       redisPort: 6379,
       mailpitPort: 8025,
-      includeRedis: setupAnswers.includeRedis,
-      includeMailpit: setupAnswers.includeMailpit,
+      includeRedis: config.includeRedis,
+      includeMailpit: config.includeMailpit,
+      includeMeilisearch: config.includeMeilisearch,
+      meilisearchPort: 7700,
+      includeMinIO: config.includeMinIO,
+      minioPort: 9000,
+      minioConsolePort: 9001,
     });
 
     fs.writeFileSync(path.join(targetDir, 'docker-compose.yml'), dockerComposeContent);
 
-    // 5. Update .env file in Laravel project to connect seamlessly to Docker services
+    // 5. Create SQLite database file if needed
+    if (config.dbDriver === 'sqlite') {
+      const dbDir = path.join(targetDir, 'database');
+      if (!fs.existsSync(dbDir)) {
+        fs.mkdirSync(dbDir, { recursive: true });
+      }
+      const sqlitePath = path.join(dbDir, 'database.sqlite');
+      if (!fs.existsSync(sqlitePath)) {
+        fs.writeFileSync(sqlitePath, '');
+      }
+    }
+
+    // 6. Update .env file in Laravel project to connect seamlessly to Docker services
     const envPath = path.join(targetDir, '.env');
     if (fs.existsSync(envPath)) {
       let envContent = fs.readFileSync(envPath, 'utf8');
 
-      // Update Database parameters
-      if (setupAnswers.dbDriver === 'postgres') {
+      // --- Database config ---
+      if (config.dbDriver === 'postgres') {
         envContent = envContent
           .replace(/DB_CONNECTION=.*/g, 'DB_CONNECTION=pgsql')
           .replace(/DB_HOST=.*/g, 'DB_HOST=db')
@@ -180,7 +293,7 @@ export async function createNewLaravelProject(name?: string, options?: any) {
           .replace(/DB_DATABASE=.*/g, 'DB_DATABASE=laravel')
           .replace(/DB_USERNAME=.*/g, 'DB_USERNAME=laravel')
           .replace(/DB_PASSWORD=.*/g, 'DB_PASSWORD=secretpassword');
-      } else {
+      } else if (config.dbDriver === 'mysql' || config.dbDriver === 'mariadb') {
         envContent = envContent
           .replace(/DB_CONNECTION=.*/g, 'DB_CONNECTION=mysql')
           .replace(/DB_HOST=.*/g, 'DB_HOST=db')
@@ -188,19 +301,48 @@ export async function createNewLaravelProject(name?: string, options?: any) {
           .replace(/DB_DATABASE=.*/g, 'DB_DATABASE=laravel')
           .replace(/DB_USERNAME=.*/g, 'DB_USERNAME=laravel')
           .replace(/DB_PASSWORD=.*/g, 'DB_PASSWORD=secretpassword');
+      } else if (config.dbDriver === 'sqlite') {
+        envContent = envContent
+          .replace(/DB_CONNECTION=.*/g, 'DB_CONNECTION=sqlite')
+          .replace(/DB_HOST=.*/g, '# DB_HOST=127.0.0.1')
+          .replace(/DB_PORT=.*/g, '# DB_PORT=3306')
+          .replace(/DB_DATABASE=.*/g, 'DB_DATABASE=/var/www/html/database/database.sqlite')
+          .replace(/DB_USERNAME=.*/g, '# DB_USERNAME=root')
+          .replace(/DB_PASSWORD=.*/g, '# DB_PASSWORD=');
       }
 
-      if (setupAnswers.includeRedis) {
+      // --- Redis ---
+      if (config.includeRedis) {
         envContent = envContent
           .replace(/REDIS_HOST=.*/g, 'REDIS_HOST=redis')
           .replace(/REDIS_PORT=.*/g, 'REDIS_PORT=6379');
       }
 
-      if (setupAnswers.includeMailpit) {
+      // --- Mailpit ---
+      if (config.includeMailpit) {
         envContent = envContent
           .replace(/MAIL_HOST=.*/g, 'MAIL_HOST=mailpit')
           .replace(/MAIL_PORT=.*/g, 'MAIL_PORT=1025')
           .replace(/MAIL_MAILER=.*/g, 'MAIL_MAILER=smtp');
+      }
+
+      // --- Meilisearch ---
+      if (config.includeMeilisearch) {
+        // Append Meilisearch config if not already present
+        if (!envContent.includes('SCOUT_DRIVER')) {
+          envContent += '\n# Meilisearch\nSCOUT_DRIVER=meilisearch\nMEILISEARCH_HOST=http://meilisearch:7700\nMEILISEARCH_KEY=\n';
+        } else {
+          envContent = envContent
+            .replace(/SCOUT_DRIVER=.*/g, 'SCOUT_DRIVER=meilisearch');
+        }
+      }
+
+      // --- MinIO ---
+      if (config.includeMinIO) {
+        // Append MinIO / S3 config if not already present
+        if (!envContent.includes('AWS_ENDPOINT')) {
+          envContent += '\n# MinIO (S3-compatible)\nFILESYSTEM_DISK=s3\nAWS_ACCESS_KEY_ID=lenv\nAWS_SECRET_ACCESS_KEY=password\nAWS_DEFAULT_REGION=us-east-1\nAWS_BUCKET=local\nAWS_ENDPOINT=http://minio:9000\nAWS_USE_PATH_STYLE_ENDPOINT=true\n';
+        }
       }
 
       fs.writeFileSync(envPath, envContent);
@@ -213,8 +355,8 @@ export async function createNewLaravelProject(name?: string, options?: any) {
     process.exit(1);
   }
 
-  // 6. Optionally run Docker compose up
-  if (setupAnswers.runDockerUp) {
+  // 7. Optionally run Docker compose up
+  if (config.runDockerUp) {
     const dockerSpinner = ora('Building and starting Docker containers...').start();
     try {
       await execa('docker', ['compose', 'up', '-d', '--build'], { cwd: targetDir });
@@ -244,12 +386,27 @@ export async function createNewLaravelProject(name?: string, options?: any) {
     }
   }
 
+  // --- Summary ---
   console.log(chalk.green.bold(`\n🎉 Project ${projectName} is ready!`));
   console.log(chalk.cyan(`\n📍 Project location: ${targetDir}`));
+
+  // Show services summary
+  const services: string[] = ['app', 'nginx'];
+  if (config.dbDriver !== 'sqlite') services.push(`db (${config.dbDriver})`);
+  else services.push('sqlite (file-based)');
+  if (config.includeRedis) services.push('redis');
+  if (config.includeMailpit) services.push('mailpit');
+  if (config.includeMeilisearch) services.push('meilisearch');
+  if (config.includeMinIO) services.push('minio');
+
+  console.log(chalk.white(`\n📦 Services: ${chalk.cyan(services.join(', '))}`));
+
   console.log(chalk.white(`\nUseful commands:`));
   console.log(chalk.yellow(`  cd ${projectName}`));
-  console.log(chalk.yellow(`  lenv up           # Start Docker environment`));
-  console.log(chalk.yellow(`  lenv down         # Stop Docker environment`));
+  console.log(chalk.yellow(`  lenv up              # Start Docker environment`));
+  console.log(chalk.yellow(`  lenv down            # Stop Docker environment`));
+  console.log(chalk.yellow(`  lenv restart         # Restart all containers`));
+  console.log(chalk.yellow(`  lenv test            # Run tests inside container`));
   console.log(chalk.yellow(`  lenv artisan migrate # Run migrations inside container`));
-  console.log(chalk.yellow(`  lenv shell        # Open shell inside app container\n`));
+  console.log(chalk.yellow(`  lenv shell           # Open shell inside app container\n`));
 }

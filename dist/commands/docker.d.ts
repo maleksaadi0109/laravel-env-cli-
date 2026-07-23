@@ -6,3 +6,5 @@ export declare function runDockerLogs(service?: string): Promise<void>;
 export declare function runDockerShell(service?: string): Promise<void>;
 export declare function runArtisanCommand(args: string[]): Promise<void>;
 export declare function runComposerCommand(args: string[]): Promise<void>;
+export declare function runDockerRestart(service?: string): Promise<void>;
+export declare function runTest(args: string[]): Promise<void>;
