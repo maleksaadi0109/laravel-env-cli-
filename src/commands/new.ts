@@ -1,0 +1,255 @@
+import fs from 'fs';
+import path from 'path';
+import inquirer from 'inquirer';
+import chalk from 'chalk';
+import ora from 'ora';
+import execa from 'execa';
+import { generateDockerfile } from '../templates/dockerfile';
+import { generateNginxConf } from '../templates/nginx';
+import { generateDockerCompose } from '../templates/docker-compose';
+import { fixDockerPermissions } from './docker';
+import { printBanner } from '../utils/banner';
+
+export async function createNewLaravelProject(name?: string, options?: any) {
+  printBanner();
+
+  let projectName = name;
+  if (!projectName) {
+    console.log();
+    const answers = await inquirer.prompt([
+      {
+        type: 'input',
+        name: 'projectName',
+        message: 'What is your Laravel project name?',
+        default: 'my-laravel-app',
+        validate: (input) => (input.trim() ? true : 'Project name cannot be empty'),
+      },
+    ]);
+    projectName = answers.projectName;
+    console.log();
+  }
+
+  const targetDir = path.resolve(process.cwd(), projectName as string);
+
+  if (fs.existsSync(targetDir)) {
+    console.error(chalk.red(`\n❌ Error: Directory '${projectName}' already exists at ${targetDir}\n`));
+    process.exit(1);
+  }
+
+  console.log(chalk.cyan.bold('📋 Project Configuration Setup:\n'));
+
+  const setupAnswers = await inquirer.prompt([
+    {
+      type: 'list',
+      name: 'frontend',
+      message: 'Select Frontend Stack / Starter Kit:',
+      choices: [
+        { name: 'Blade (Standard Laravel views)', value: 'blade' },
+        { name: 'Vue (Inertia.js via Breeze)', value: 'vue' },
+        { name: 'React (Inertia.js via Breeze)', value: 'react' },
+        { name: 'Livewire (via Breeze)', value: 'livewire' },
+        { name: 'API Only', value: 'api' },
+      ],
+      default: 'blade',
+      when: () => !options?.frontend,
+    },
+    {
+      type: 'list',
+      name: 'phpVersion',
+      message: 'Select PHP Version:',
+      choices: ['8.3', '8.2', '8.4', '8.1'],
+      default: '8.3',
+    },
+    {
+      type: 'list',
+      name: 'dbDriver',
+      message: 'Select Database Engine:',
+      choices: [
+        { name: 'PostgreSQL', value: 'postgres' },
+        { name: 'MySQL', value: 'mysql' },
+      ],
+      default: 'postgres',
+    },
+    {
+      type: 'number',
+      name: 'webPort',
+      message: 'HTTP Web Port (Nginx):',
+      default: 8080,
+    },
+    {
+      type: 'number',
+      name: 'dbPort',
+      message: 'Database Host Port:',
+      default: 5432,
+    },
+    {
+      type: 'confirm',
+      name: 'includeRedis',
+      message: 'Include Redis container?',
+      default: true,
+    },
+    {
+      type: 'confirm',
+      name: 'includeMailpit',
+      message: 'Include Mailpit (Email testing) container?',
+      default: true,
+    },
+    {
+      type: 'confirm',
+      name: 'runDockerUp',
+      message: 'Start Docker containers immediately after setup?',
+      default: true,
+    },
+  ]);
+
+  const selectedFrontend = options?.frontend || setupAnswers.frontend || 'blade';
+
+  console.log('\n' + chalk.gray('───────────────────────────────────────────────────────────') + '\n');
+  const spinner = ora('Creating fresh Laravel project via Composer...').start();
+
+  try {
+    // 1. Run composer create-project
+    await execa('composer', ['create-project', 'laravel/laravel', projectName as string, '--prefer-dist']);
+    spinner.succeed(chalk.green('Laravel project created successfully!\n'));
+  } catch (err: any) {
+    spinner.fail(chalk.red('Failed to create Laravel project via Composer.\n'));
+    console.error(err.message);
+    process.exit(1);
+  }
+
+  // 1b. Install Frontend Scaffolding if selected
+  if (selectedFrontend !== 'blade') {
+    const breezeSpinner = ora(`Installing ${selectedFrontend} frontend scaffolding via Laravel Breeze...`).start();
+    try {
+      await execa('composer', ['require', 'laravel/breeze', '--dev'], { cwd: targetDir });
+      await execa('php', ['artisan', 'breeze:install', selectedFrontend, '--no-interaction'], { cwd: targetDir });
+      breezeSpinner.succeed(chalk.green(`Frontend scaffolding (${selectedFrontend}) installed successfully!`));
+    } catch (err: any) {
+      breezeSpinner.fail(chalk.red(`Failed to install ${selectedFrontend} frontend scaffolding.`));
+      console.error(err.message);
+    }
+  }
+
+  const envSpinner = ora('Setting up Docker environment files...').start();
+
+  try {
+    // 2. Create docker/ subfolders
+    const dockerDir = path.join(targetDir, 'docker');
+    const nginxDir = path.join(dockerDir, 'nginx');
+    fs.mkdirSync(nginxDir, { recursive: true });
+
+    // 3. Write Dockerfile & Nginx conf
+    fs.writeFileSync(
+      path.join(dockerDir, 'Dockerfile'),
+      generateDockerfile({ phpVersion: setupAnswers.phpVersion })
+    );
+
+    fs.writeFileSync(
+      path.join(nginxDir, 'default.conf'),
+      generateNginxConf()
+    );
+
+    // 4. Write docker-compose.yml
+    const dockerComposeContent = generateDockerCompose({
+      projectName: projectName as string,
+      dbDriver: setupAnswers.dbDriver,
+      dbName: 'laravel',
+      dbUser: 'laravel',
+      dbPassword: 'secretpassword',
+      webPort: setupAnswers.webPort,
+      dbPort: setupAnswers.dbPort,
+      redisPort: 6379,
+      mailpitPort: 8025,
+      includeRedis: setupAnswers.includeRedis,
+      includeMailpit: setupAnswers.includeMailpit,
+    });
+
+    fs.writeFileSync(path.join(targetDir, 'docker-compose.yml'), dockerComposeContent);
+
+    // 5. Update .env file in Laravel project to connect seamlessly to Docker services
+    const envPath = path.join(targetDir, '.env');
+    if (fs.existsSync(envPath)) {
+      let envContent = fs.readFileSync(envPath, 'utf8');
+
+      // Update Database parameters
+      if (setupAnswers.dbDriver === 'postgres') {
+        envContent = envContent
+          .replace(/DB_CONNECTION=.*/g, 'DB_CONNECTION=pgsql')
+          .replace(/DB_HOST=.*/g, 'DB_HOST=db')
+          .replace(/DB_PORT=.*/g, 'DB_PORT=5432')
+          .replace(/DB_DATABASE=.*/g, 'DB_DATABASE=laravel')
+          .replace(/DB_USERNAME=.*/g, 'DB_USERNAME=laravel')
+          .replace(/DB_PASSWORD=.*/g, 'DB_PASSWORD=secretpassword');
+      } else {
+        envContent = envContent
+          .replace(/DB_CONNECTION=.*/g, 'DB_CONNECTION=mysql')
+          .replace(/DB_HOST=.*/g, 'DB_HOST=db')
+          .replace(/DB_PORT=.*/g, 'DB_PORT=3306')
+          .replace(/DB_DATABASE=.*/g, 'DB_DATABASE=laravel')
+          .replace(/DB_USERNAME=.*/g, 'DB_USERNAME=laravel')
+          .replace(/DB_PASSWORD=.*/g, 'DB_PASSWORD=secretpassword');
+      }
+
+      if (setupAnswers.includeRedis) {
+        envContent = envContent
+          .replace(/REDIS_HOST=.*/g, 'REDIS_HOST=redis')
+          .replace(/REDIS_PORT=.*/g, 'REDIS_PORT=6379');
+      }
+
+      if (setupAnswers.includeMailpit) {
+        envContent = envContent
+          .replace(/MAIL_HOST=.*/g, 'MAIL_HOST=mailpit')
+          .replace(/MAIL_PORT=.*/g, 'MAIL_PORT=1025')
+          .replace(/MAIL_MAILER=.*/g, 'MAIL_MAILER=smtp');
+      }
+
+      fs.writeFileSync(envPath, envContent);
+    }
+
+    envSpinner.succeed(chalk.green('Docker configuration and environment variables configured!'));
+  } catch (err: any) {
+    envSpinner.fail(chalk.red('Failed to write Docker configuration files.'));
+    console.error(err.message);
+    process.exit(1);
+  }
+
+  // 6. Optionally run Docker compose up
+  if (setupAnswers.runDockerUp) {
+    const dockerSpinner = ora('Building and starting Docker containers...').start();
+    try {
+      await execa('docker', ['compose', 'up', '-d', '--build'], { cwd: targetDir });
+      dockerSpinner.succeed(chalk.green('Docker containers built and running!'));
+    } catch (err: any) {
+      dockerSpinner.fail(chalk.yellow('Docker startup encountered an issue.'));
+      const errMsg = err.stderr || err.message || '';
+      if (errMsg) {
+        console.error(chalk.red('\nDocker error output:'));
+        console.error(chalk.red(errMsg));
+        if (errMsg.includes('permission denied') && errMsg.includes('docker.sock')) {
+          console.log(chalk.yellow('\n⚠️  Docker permission error detected. Prompting for sudo to auto-fix socket permissions...'));
+          const fixed = await fixDockerPermissions();
+          if (fixed) {
+            const retrySpinner = ora('Retrying Docker container build & startup...').start();
+            try {
+              await execa('docker', ['compose', 'up', '-d', '--build'], { cwd: targetDir });
+              retrySpinner.succeed(chalk.green('Docker containers built and running!'));
+            } catch (retryErr: any) {
+              retrySpinner.fail(chalk.red('Retry Docker startup failed.'));
+              console.error(retryErr.message);
+            }
+          }
+        }
+      }
+      console.log(chalk.yellow('\nYou can try running "docker compose up -d" inside the project directory manually.'));
+    }
+  }
+
+  console.log(chalk.green.bold(`\n🎉 Project ${projectName} is ready!`));
+  console.log(chalk.cyan(`\n📍 Project location: ${targetDir}`));
+  console.log(chalk.white(`\nUseful commands:`));
+  console.log(chalk.yellow(`  cd ${projectName}`));
+  console.log(chalk.yellow(`  lenv up           # Start Docker environment`));
+  console.log(chalk.yellow(`  lenv down         # Stop Docker environment`));
+  console.log(chalk.yellow(`  lenv artisan migrate # Run migrations inside container`));
+  console.log(chalk.yellow(`  lenv shell        # Open shell inside app container\n`));
+}

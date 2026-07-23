@@ -1,0 +1,38 @@
+{
+  "name": "laravel-env-cli",
+  "version": "1.0.0",
+  "description": "CLI tool for automating Laravel project creation and Docker environment orchestration",
+  "main": "dist/index.js",
+  "bin": {
+    "laravel-env": "./dist/index.js",
+    "lenv": "./dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "watch": "tsc --watch",
+    "start": "node dist/index.js",
+    "prepare": "npm run build"
+  },
+  "keywords": [
+    "laravel",
+    "docker",
+    "cli",
+    "environment",
+    "docker-compose",
+    "php"
+  ],
+  "author": "Antigravity",
+  "license": "MIT",
+  "dependencies": {
+    "chalk": "^4.1.2",
+    "commander": "^12.1.0",
+    "execa": "^5.1.1",
+    "inquirer": "^8.2.6",
+    "ora": "^5.4.1"
+  },
+  "devDependencies": {
+    "@types/inquirer": "^8.2.10",
+    "@types/node": "^20.11.0",
+    "typescript": "^5.3.3"
+  }
+}
