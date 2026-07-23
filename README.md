@@ -1,5 +1,9 @@
 # lenv (Laravel Environment CLI)
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![npm version](https://img.shields.io/npm/v/lenv.svg)](https://www.npmjs.com/package/lenv)
+[![Node](https://img.shields.io/badge/node-%3E%3D18-brightgreen)](https://nodejs.org)
+
 A CLI tool for creating Laravel projects with pre-configured Docker containers.
 
 ```
@@ -14,16 +18,35 @@ A CLI tool for creating Laravel projects with pre-configured Docker containers.
 
 ---
 
-## Quick Start
+## Requirements
+
+- Node.js 18+
+- Docker & Docker Compose
+- Composer (if not using the containerized build step)
+
+---
+
+## Installation
 
 ```bash
-# Install dependencies and build
+npm install -g lenv
+```
+
+<details>
+<summary>Or build from source</summary>
+
+```bash
+git clone https://github.com/maleksaadi0109/laravel-env-cli
+cd laravel-env-cli
 npm install
 npm run build
-
-# Link globally so 'lenv' works anywhere
 npm link
 ```
+</details>
+
+---
+
+## Quick Start
 
 Create a new project:
 
@@ -90,13 +113,12 @@ lenv new saas --profile=saas
 ---
 
 ## Why lenv instead of Laravel Sail?
+
 While Laravel Sail provides an excellent starting point, lenv is built for developers who want a cleaner, more production-like infrastructure from day one:
 
-Production-like Web Server: lenv sets up Nginx out of the box instead of relying on PHP's built-in development server, ensuring your local environment closely mirrors your deployment architecture.
-
-Interactive Scaffolding: Rather than publishing and modifying docker-compose files manually after installation, lenv interactively asks for your exact stack, DB preferences, and UI framework during project creation.
-
-Seamless Command Proxying: It eliminates the need for alias configuration. You run lenv artisan migrate and it intuitively executes inside the proper container.
+- **Production-like Web Server** — lenv sets up Nginx out of the box instead of relying on PHP's built-in development server, ensuring your local environment closely mirrors your deployment architecture.
+- **Interactive Scaffolding** — Rather than publishing and modifying docker-compose files manually after installation, lenv interactively asks for your exact stack, DB preferences, and UI framework during project creation.
+- **Seamless Command Proxying** — It eliminates the need for alias configuration. You run `lenv artisan migrate` and it intuitively executes inside the proper container.
 
 ---
 
@@ -210,6 +232,12 @@ If you see `permission denied while trying to connect to the docker API at unix:
    sudo usermod -aG docker $USER
    newgrp docker
    ```
+
+---
+
+## Contributing
+
+Issues and pull requests are welcome. If you build a plugin, feel free to open a PR to get it listed here.
 
 ---
 
